@@ -13,6 +13,7 @@ from mne.preprocessing import ICA
 from mne.time_frequency import stft
 from scipy.signal import decimate
 from sklearn.linear_model import LogisticRegression
+from sklearn import cross_validation
 
 def file_to_raw(fname):
     """Return an MNE RawArray object with the data in the specified file."""
@@ -42,10 +43,19 @@ def get_logpsd(ica, rawdata):
     return np.log(np.abs(fourtrans)**2), FTtstep
 
 def psd_to_features(logpsd):
-    """Given a numpy array of log PSD, return matrix of feature vectors."""
-    features = decimate(logpsd, 65, axis=1)  
-    ntimebins = features.shape[-1]
+    """Given a numpy array of log PSD with shape (nchannels, nfreqs, ntimes), return matrix of feature vectors."""    
+    #features = decimate(logpsd, freqsperbin, axis=1)  
+    nfreqs = logpsd.shape[1]
+    ntimebins = logpsd.shape[2]
+    nbins = 10
+    freqsperbin = int(nfreqs/nbins)
+    # bin the frequencies; each bin's value is just the mean of the values for freqs in that bin
+    #features = [[np.mean(logpsd[ch, freqsperbin*i:freqsperbin*(i+1)], axis=0) for i in range(nbins)] for ch in range(logpsd.shape[0])]
+    features = decimate(logpsd, freqsperbin, axis=1)
+    # TODO: handle the leftover frequencies at the top. I don't think these frequencies will matter, so this is a low priority.
+
     # flatten into a vector for each time point
+    features = np.array(features)
     return features.reshape(-1,ntimebins).T, ntimebins 
 
 def get_features(ica, rawdata):
@@ -72,67 +82,73 @@ def labels_to_events(labels, FTtstep, ntimes):
         events[FTtstep*(timebin+1):FTtstep*(timebin+2),:] = labels[timebin,:]
     return events
     
+subject = 1
 
 # read in training data
-trseries = range(1,8) #change 8 to 9 in the end, this was just for experiment
-datafiles = ["Data/train/subj1_series{0}_data.csv".format(s) for s in trseries]
+trseries = range(1,9)
+datafiles = ["../../Data/train/subj{0}_series{1}_data.csv".format(subject, s) for s in trseries]
 rawdata, events = prepare(datafiles)
 ntrtimes = rawdata.n_times
 nevents = events.shape[-1]
 
 ica = ICA(verbose=False)
 ica.fit(rawdata)
-#ica.plot_sources(raw)
-#other ideas: band-pass filter at freqs thought to be relevant; CSP
 
+# get features and labels in time bins associated with fourier transform
 logpsd, FTtstep = get_logpsd(ica, rawdata)
 features, ntimebins = psd_to_features(logpsd)
 labels = events_to_labels(events, FTtstep, ntimebins)
 
+# separate some data for cross-validation
+features_train, features_cv, labels_train, labels_cv = cross_validation.train_test_split(
+    features, labels, test_size = 0.3)
+
 # train classifiers. Note we can't use just one classifier object 
 # because some events overlap so we want to be able to predict combinations of classes
-classifiers = [LogisticRegression() for i in range(nevents)]
-for i in range(nevents):
-    classifiers[i].fit(features, labels[:,i])
+classifiers = [LogisticRegression() for event in range(nevents)]
+for event in range(nevents):
+    classifiers[event].fit(features_train, labels_train[:,event])
     
-# score classifiers on training set
+# naively score classifiers on training set
 trscores = np.zeros((nevents))
 for event in range(nevents):
     trscores[event] = classifiers[event].score(features, labels[:,event])
-print ("Scores on series 1-7 in binned time: " + str(trscores) )
+print ("Scores on training set in binned time: " + str(trscores) )
 
-# score in original time space
-
-# score classifiers on CV set
-exdata, exevents = prepare(["Data/train/subj1_series8_data.csv"])
-exfeatures, FTtstep = get_features(ica, exdata)
-exlabels = events_to_labels(exevents, FTtstep, exfeatures.shape[0])
+# naively score classifiers on CV set
 testscores = np.zeros((nevents))
 for event in range(nevents):
-    testscores[event] = classifiers[event].score(exfeatures, exlabels[:,event])
-print ("Scores on series 8 in binned time: " + str(testscores) )
+    testscores[event] = classifiers[event].score(features_cv, labels_cv[:,event])
+print ("Scores on CV set in binned time: " + str(testscores) )
 
-# score on CV set in original time space
-n_extimes = exdata.n_times
+
+# generate ROC curves for CV set in binned time
+predlabels_cv = np.transpose([classifiers[e].predict_proba(features_cv)[:,1] for e in range(nevents)])
+trues_cv = predlabels_cv*labels_cv 
+falses_cv = predlabels_cv*(1 - labels_cv)
+thresholds = np.arange(0,1,.001)
+falserates = [np.sum(falses_cv > th, axis=0)/np.sum(1-labels_cv,axis=0) for th in thresholds]
+truerates = [np.sum(trues_cv > th, axis=0)/np.sum(labels_cv,axis=0) for th in thresholds]
+plt.plot(falserates, truerates)
+rocscores = np.trapz(truerates, falserates, axis=0)
+print("Areas under ROC curves:")
+print (rocscores)
 
 # read and prepare test data
-testseries = [9,10]
-testfiles = ["Data/test/subj1_series{0}_data.csv".format(s) for s in testseries]
-rawtestdata = prepare(datafiles, read_events=False)
-testfeatures = get_features(ica, rawtestdata)
-ntesttimebins = testfeatures.shape[0]
+#testseries = [9,10]
+#testfiles = ["../../Data/test/subj{0}_series{1}_data.csv".format(subject, s) for s in testseries]
+#rawtestdata = prepare(datafiles, read_events=False)
+#testfeatures, _ = get_features(ica, rawtestdata)
+#ntesttimebins = testfeatures.shape[0]
 
 # get predictions and errors for individual time steps
-ntimes = rawdata.n_times
-predlabels = np.zeros((ntimebins,nevents))
-for event in range(nevents):
-    predlabels[:,event] = classifiers[event].predict_proba(features)[:,1]
-predevents = labels_to_events(predlabels, FTtstep, ntimes)
-real_errors = np.sum(np.abs(events - predevents),0)/ntimes
-print (real_errors)
+#ntimes = rawdata.n_times
+#predlabels = np.zeros((ntimebins,nevents))
+#for event in range(nevents):
+#    predlabels[:,event] = classifiers[event].predict_proba(features)[:,1]
+#predevents = labels_to_events(predlabels, FTtstep, ntimes)
+#real_errors = np.sum(np.abs(events - predevents),0)/ntimes
+#print (real_errors)
 
-plt.figure()
-plt.plot(predlabels)
-plt.show()
 
 # TODO: write code to predict events in test data and put in submission format
