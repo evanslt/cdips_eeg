@@ -30,6 +30,7 @@ def prepare(datafiles, read_events = True):
         return rawdata, events
     else:
         return rawdata, None
+        
 
 def get_logpsd(ica, rawdata):    
     """Given MNE ICA object already fit to data, and MNE RawArray, return numpy array
@@ -37,7 +38,7 @@ def get_logpsd(ica, rawdata):
     sources = ica.get_sources(rawdata).to_data_frame().values
     nsamples = 256 # number of samples in FT window
     FTtstep = int(nsamples/2)
-    fourtrans = stft(sources.T, nsamples, tstep = FTtstep)
+    fourtrans = stft(sources.T, nsamples, tstep = FTtstep, verbose=False)
     return np.log(np.abs(fourtrans)**2), FTtstep
 
 def psd_to_features(logpsd, nbins = 7, usetwobins = False):
@@ -80,17 +81,20 @@ def labels_to_events(labels, FTtstep, ntimes):
         events[FTtstep*(timebin+1):FTtstep*(timebin+2),:] = labels[timebin,:]
     return events   
     
-def preprocess(subject = 1, train = True, ica = None):
+def preprocess(subject = 1, train = True, series = None, ica = None):
     """Preprocess data for given subject number. Returns feature matrix, label/target matrix,
     the number of events (6), and the number of timepoints in the raw data.
     For test data, pass in pretrained ICA object. For training data, an ICA
     object is created. Either way the ICA is returned."""
-    series = range(1,9) if train else range(9,11)
+    if series is None:
+        series = range(1,9) if train else range(9,11)
     trtest = "train" if train else "test"
     datafiles = ["../../Data/{0}/subj{1}_series{2}_data.csv".format(trtest, subject, s) for s in series]   
     rawdata, events = prepare(datafiles, read_events = train)
+    
+    # TODO: filtering
 
-    ids = np.concatenate([np.array(pd.read_csv(fname)['id']) for fname in datafiles])
+    ids = np.concatenate([np.array(pd.read_csv(fname)['id']) for fname in datafiles]) # just needed for submission format
     ntimes = rawdata.n_times
     nevents = events.shape[-1] if train else None
     

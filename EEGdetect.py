@@ -17,24 +17,33 @@ import preprocessing
 
 def crossvalidation(subject=1):
     time.clock() 
+    # TODO: right now the preprocessing is done on all data, so the ICA knows about
+    # the putative test data. The test data should not be included for the ICA.
+    #features, labels, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
     
-    features, labels, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
-    
+    features_train, labels_train, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject, series = range(1,7))
+     
     preptime = time.clock()
-    print ("Preprocessing took " + str(preptime) + " seconds.")    
-    
-    # separate some data for cross-validation
-    features_train, features_cv, labels_train, labels_cv = cross_validation.train_test_split(
-        features, labels, test_size = 0.3)
-    
+    print ("Preprocessing took " + str(preptime) + " seconds.")      
+     
     # train classifiers. Note we can't use just one classifier object 
     # because some events overlap so we want to be able to predict combinations of classes
     classifiers = [LogisticRegression(C=1) for event in range(nevents)]
     for event in range(nevents):
         classifiers[event].fit(features_train, labels_train[:,event])
-        
+    
     traintime = time.clock() - preptime
-    print ("Trained the classifiers in " + str(traintime) + " seconds.")
+    print ("Trained the classifiers in " + str(traintime) + " seconds.")    
+    
+    # read and prepare test data
+    features_cv, labels_cv, _, ncvtimes, _, _, _ = preprocessing.preprocess(subject = subject,
+                                                                          train = True,
+                                                                          series = range(7,9),
+                                                                          ica = ica)     
+    
+    # separate some data for cross-validation
+    #features_train, features_cv, labels_train, labels_cv = cross_validation.train_test_split(
+        #features, labels, test_size = 0.3)
         
     # naively score classifiers on training set
     trscores = np.zeros((nevents))
@@ -67,7 +76,7 @@ def do_all(subfile = "EEGbears.csv"):
     cols = ['HandStart','FirstDigitTouch', 'BothStartLoadPhase','LiftOff','Replace','BothReleased']
     ids_tot = []
     pred_tot = []
-    for subject in range(1,9):
+    for subject in range(1,13):
         features_train, labels_train, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
         
         # train classifiers. Note we can't use just one classifier object 
@@ -78,8 +87,8 @@ def do_all(subfile = "EEGbears.csv"):
 
         # read and prepare test data
         features_test, _, _, ntesttimes, _, _, ids = preprocessing.preprocess(subject = subject,
-                                                                             train = False,
-                                                                             ica = ica)
+                                                                              train = False,
+                                                                              ica = ica)
         ids_tot.append(ids)
         # get predictions for individual time steps
         ntimebins = features_test.shape[0]
@@ -88,9 +97,10 @@ def do_all(subfile = "EEGbears.csv"):
             predlabels[:,event] = classifiers[event].predict_proba(features_test)[:,1]
         predevents = preprocessing.labels_to_events(predlabels, FTtstep, ntesttimes)
         pred_tot.append(predevents)
+        print ("Finished subject " + str(subject) + ".")
     # create pandas object for sbmission, write to file
     submission = pd.DataFrame(index=np.concatenate(ids_tot),
                           columns=cols,
                           data=np.concatenate(pred_tot))                             
     submission.to_csv(subfile, index_label='id', float_format='%.3f')
-
+    return submission
