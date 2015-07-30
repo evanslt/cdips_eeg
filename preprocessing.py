@@ -117,4 +117,4 @@ def preprocess(subject = 1, train = True, series = None, ica = None):
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
     
-    return features, labels, nevents, ntimes, ica, FTtstep, ids
+    return features, labels, nevents, events, ntimes, ica, FTtstep, ids

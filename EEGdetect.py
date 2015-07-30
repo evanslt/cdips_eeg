@@ -15,13 +15,11 @@ import time
 
 import preprocessing
 
+
 def crossvalidation(subject=1):
     time.clock() 
-    # TODO: right now the preprocessing is done on all data, so the ICA knows about
-    # the putative test data. The test data should not be included for the ICA.
-    #features, labels, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
     
-    features_train, labels_train, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject, series = range(1,7))
+    features_train, labels_train, nevents, _, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject, series = range(1,7))
      
     preptime = time.clock()
     print ("Preprocessing took " + str(preptime) + " seconds.")      
@@ -36,7 +34,7 @@ def crossvalidation(subject=1):
     print ("Trained the classifiers in " + str(traintime) + " seconds.")    
     
     # read and prepare test data
-    features_cv, labels_cv, _, ncvtimes, _, _, _ = preprocessing.preprocess(subject = subject,
+    features_cv, labels_cv, _, events_cv, ncvtimes, _, _, _ = preprocessing.preprocess(subject = subject,
                                                                           train = True,
                                                                           series = range(7,9),
                                                                           ica = ica)     
@@ -60,24 +58,41 @@ def crossvalidation(subject=1):
     
     # generate ROC curves for CV set in binned time
     predlabels_cv = np.transpose([classifiers[e].predict_proba(features_cv)[:,1] for e in range(nevents)])
-    trues_cv = predlabels_cv*labels_cv 
-    falses_cv = predlabels_cv*(1 - labels_cv)
-    thresholds = np.arange(0,1,.001)
-    falserates = [np.sum(falses_cv > th, axis=0)/np.sum(1-labels_cv,axis=0) for th in thresholds]
-    truerates = [np.sum(trues_cv > th, axis=0)/np.sum(labels_cv,axis=0) for th in thresholds]
-    plt.plot(falserates, truerates)
-    rocscores = np.abs(np.trapz(truerates, falserates, axis=0))
+    rocscoresbinned = ROCcurve(predlabels_cv, labels_cv)
+    print("For binned time...")
     print("Areas under ROC curves:")
-    print (rocscores)
-    print ("Average ROC score:" + str(np.mean(rocscores)))
-    return np.mean(rocscores)
+    print (rocscoresbinned)
+    print ("Average ROC score:" + str(np.mean(rocscoresbinned)))
+    
+    # generate ROC curves for CV set in real time
+    predevents_cv = preprocessing.labels_to_events(predlabels_cv, FTtstep, ncvtimes)
+    rocscoresreal = ROCcurve(predevents_cv, events_cv)
+    print("For real time...")
+    print("Areas under ROC curves:")
+    print (rocscoresreal)
+    print ("Average ROC score:" + str(np.mean(rocscoresreal)))
+    return np.mean(rocscoresbinned), np.mean(rocscoresreal)
+
+def ROCcurve(predevents, trueevents):
+    """Given matrix of predictions and ground truth, plots the ROC curves and 
+    an estimate of the areas under them."""
+    trues = predevents*trueevents
+    falses = predevents*(1 - trueevents)
+    thresholds = np.arange(0,1,.01)
+    falserates = [np.sum(falses > th, axis=0)/np.sum(1-trueevents,axis=0) for th in thresholds]
+    truerates = [np.sum(trues > th, axis=0)/np.sum(trueevents,axis=0) for th in thresholds]
+    plt.figure()
+    plt.plot(falserates, truerates)
+    plt.title("ROC")
+    rocscores = np.abs(np.trapz(truerates, falserates, axis=0))
+    return rocscores
 
 def do_all(subfile = "EEGbears.csv"):
     cols = ['HandStart','FirstDigitTouch', 'BothStartLoadPhase','LiftOff','Replace','BothReleased']
     ids_tot = []
     pred_tot = []
     for subject in range(1,13):
-        features_train, labels_train, nevents, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
+        features_train, labels_train, nevents, _, ntrtimes, ica, FTtstep, _ = preprocessing.preprocess(subject = subject)
         
         # train classifiers. Note we can't use just one classifier object 
         # because some events overlap so we want to be able to predict combinations of classes
@@ -86,7 +101,7 @@ def do_all(subfile = "EEGbears.csv"):
             classifiers[event].fit(features_train, labels_train[:,event])
 
         # read and prepare test data
-        features_test, _, _, ntesttimes, _, _, ids = preprocessing.preprocess(subject = subject,
+        features_test, _, _, _, ntesttimes, _, _, ids = preprocessing.preprocess(subject = subject,
                                                                               train = False,
                                                                               ica = ica)
         ids_tot.append(ids)
