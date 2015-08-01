@@ -29,14 +29,14 @@ def prepare(datafiles, read_events = True):
         events = np.concatenate([pd.read_csv(f).values[:,1:] for f in eventfiles])
         return rawdata, events
     else:
-        return rawdata, None
-        
+        return rawdata, None        
+
 
 def get_logpsd(ica, rawdata):    
     """Given MNE ICA object already fit to data, and MNE RawArray, return numpy array
     of the log power spectral density of the data in the RawArray."""
     sources = ica.get_sources(rawdata).to_data_frame().values
-    nsamples = 256 # number of samples in FT window
+    nsamples = 512 # number of samples in FT window
     FTtstep = int(nsamples/2)
     fourtrans = stft(sources.T, nsamples, tstep = FTtstep, verbose=False)
     return np.log(np.abs(fourtrans)**2), FTtstep

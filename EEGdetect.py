@@ -9,12 +9,27 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sklearn.linear_model import LogisticRegression
-from sklearn import cross_validation
+from sklearn.metrics import roc_auc_score
+
+from sklearn.linear_model import LogisticRegression as SKLearnClf
+#from sklearn.ensemble import RandomForestClassifier as SKLearnClf
+#from sklearn import cross_validation
 import time
 
 import preprocessing
 
+
+def multiCV(subjects = [1,3]):
+    predictions, truths, features, clfs, meanbinneds, meanreals = np.swapaxes([crossvalidation(subject = s) for s in subjects],0,1)
+    print ("Individual subject ROC scores:")
+    for i in range(len(subjects)):
+        print("Binned: " + str(meanbinneds[i]) + ", real: " + str(meanreals[i]) )
+    print ("Combined ROC score:")
+    catpredictions = np.concatenate(predictions, axis=0)
+    cattruths = np.concatenate(truths, axis=0)
+    catrocscores = ROCcurve(catpredictions, cattruths)
+    print (catrocscores)
+    return predictions, truths, meanbinneds, meanreals, catrocscores
 
 def crossvalidation(subject=1):
     time.clock() 
@@ -26,7 +41,7 @@ def crossvalidation(subject=1):
      
     # train classifiers. Note we can't use just one classifier object 
     # because some events overlap so we want to be able to predict combinations of classes
-    classifiers = [LogisticRegression(C=1) for event in range(nevents)]
+    classifiers = [SKLearnClf() for event in range(nevents)]
     for event in range(nevents):
         classifiers[event].fit(features_train, labels_train[:,event])
     
@@ -38,6 +53,7 @@ def crossvalidation(subject=1):
                                                                           train = True,
                                                                           series = range(7,9),
                                                                           ica = ica)     
+    events_cv = events_cv.astype(int) # I don't know why but it's an object array before this    
     
     # separate some data for cross-validation
     #features_train, features_cv, labels_train, labels_cv = cross_validation.train_test_split(
@@ -71,7 +87,7 @@ def crossvalidation(subject=1):
     print("Areas under ROC curves:")
     print (rocscoresreal)
     print ("Average ROC score:" + str(np.mean(rocscoresreal)))
-    return np.mean(rocscoresbinned), np.mean(rocscoresreal)
+    return predevents_cv, events_cv, features_cv, classifiers, np.mean(rocscoresbinned), np.mean(rocscoresreal)
 
 def ROCcurve(predevents, trueevents):
     """Given matrix of predictions and ground truth, plots the ROC curves and 
@@ -84,7 +100,8 @@ def ROCcurve(predevents, trueevents):
     plt.figure()
     plt.plot(falserates, truerates)
     plt.title("ROC")
-    rocscores = np.abs(np.trapz(truerates, falserates, axis=0))
+    #rocscores = np.abs(np.trapz(truerates, falserates, axis=0))
+    rocscores = [roc_auc_score(trueevents[:,e],predevents[:,e]) for e in range(6)]
     return rocscores
 
 def do_all(subfile = "EEGbears.csv"):
@@ -96,7 +113,7 @@ def do_all(subfile = "EEGbears.csv"):
         
         # train classifiers. Note we can't use just one classifier object 
         # because some events overlap so we want to be able to predict combinations of classes
-        classifiers = [LogisticRegression(C=1) for event in range(nevents)]
+        classifiers = [SKLearnClf() for event in range(nevents)]
         for event in range(nevents):
             classifiers[event].fit(features_train, labels_train[:,event])
 
